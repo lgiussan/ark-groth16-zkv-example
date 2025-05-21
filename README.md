@@ -21,7 +21,12 @@ In the second case, you need to acquire some testnet tVFY tokens (e.g. using thi
 `subxt` library uses SCALE metadata of the target chain to build a typed interface to interact with that chain. ZkVerify metadata are already committed in the repo here. They can be downloaded by [installing `subxt-cli`](https://github.com/paritytech/subxt?tab=readme-ov-file#downloading-metadata-from-a-substrate-node) and running the command
 
 ```bash
-subxt metadata -f bytes --url https://volta-rpc.zkverify.io -o zkverify-metadata.scale
+subxt metadata \
+  --pallets="SettlementGroth16Pallet" \
+  --runtime-apis="" \
+  --format="bytes" \
+  --url="https://volta-rpc.zkverify.io" \
+  --output-file="zkverify-metadata.scale"
 ```
 
 ## Usage
