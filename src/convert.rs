@@ -1,9 +1,10 @@
-use crate::zkverify::runtime_types::hp_groth16::data_structures::Scalar;
+use crate::zkverify::runtime_types::hp_groth16::data_structures::{G1, G2, Proof, Scalar};
 use crate::zkverify::runtime_types::pallet_groth16_verifier::groth16::{
-    ProofWithCurve, VerificationKeyWithCurve,
+    Curve, ProofWithCurve, VerificationKeyWithCurve,
 };
+use ark_ec::short_weierstrass::{Affine, SWCurveConfig};
 use ark_ff::PrimeField;
-use subxt::ext::codec::{Decode, Encode};
+use ark_serialize::CanonicalSerialize;
 
 pub trait IntoSubxtProof {
     fn into_subxt_proof(self) -> ProofWithCurve;
@@ -11,23 +12,27 @@ pub trait IntoSubxtProof {
 
 impl IntoSubxtProof for ark_groth16::Proof<ark_bn254::Bn254> {
     fn into_subxt_proof(self) -> ProofWithCurve {
-        pallet_groth16_verifier::Proof::new(
-            pallet_groth16_verifier::Curve::Bn254,
-            self.try_into().unwrap(),
-        )
-        .try_encode_decode()
-        .unwrap()
+        ProofWithCurve {
+            curve: Curve::Bn254,
+            proof: Proof {
+                a: self.a.into_g1(),
+                b: self.b.into_g2(),
+                c: self.c.into_g1(),
+            },
+        }
     }
 }
 
 impl IntoSubxtProof for ark_groth16::Proof<ark_bls12_381::Bls12_381> {
     fn into_subxt_proof(self) -> ProofWithCurve {
-        pallet_groth16_verifier::Proof::new(
-            pallet_groth16_verifier::Curve::Bls12_381,
-            self.try_into().unwrap(),
-        )
-        .try_encode_decode()
-        .unwrap()
+        ProofWithCurve {
+            curve: Curve::Bls12_381,
+            proof: Proof {
+                a: self.a.into_g1(),
+                b: self.b.into_g2(),
+                c: self.c.into_g1(),
+            },
+        }
     }
 }
 
@@ -37,23 +42,27 @@ pub trait IntoSubxtVk {
 
 impl IntoSubxtVk for ark_groth16::VerifyingKey<ark_bn254::Bn254> {
     fn into_subxt_vk(self) -> VerificationKeyWithCurve {
-        pallet_groth16_verifier::Vk::from_curve_and_vk(
-            pallet_groth16_verifier::Curve::Bn254,
-            self.try_into().unwrap(),
-        )
-        .try_encode_decode()
-        .unwrap()
+        VerificationKeyWithCurve {
+            curve: Curve::Bn254,
+            alpha_g1: self.alpha_g1.into_g1(),
+            beta_g2: self.beta_g2.into_g2(),
+            gamma_g2: self.gamma_g2.into_g2(),
+            delta_g2: self.delta_g2.into_g2(),
+            gamma_abc_g1: self.gamma_abc_g1.iter().map(|g1| g1.into_g1()).collect(),
+        }
     }
 }
 
 impl IntoSubxtVk for ark_groth16::VerifyingKey<ark_bls12_381::Bls12_381> {
     fn into_subxt_vk(self) -> VerificationKeyWithCurve {
-        pallet_groth16_verifier::Vk::from_curve_and_vk(
-            pallet_groth16_verifier::Curve::Bls12_381,
-            self.try_into().unwrap(),
-        )
-        .try_encode_decode()
-        .unwrap()
+        VerificationKeyWithCurve {
+            curve: Curve::Bls12_381,
+            alpha_g1: self.alpha_g1.into_g1(),
+            beta_g2: self.beta_g2.into_g2(),
+            gamma_g2: self.gamma_g2.into_g2(),
+            delta_g2: self.delta_g2.into_g2(),
+            gamma_abc_g1: self.gamma_abc_g1.iter().map(|g1| g1.into_g1()).collect(),
+        }
     }
 }
 
@@ -63,17 +72,32 @@ pub trait IntoSubxtScalar {
 
 impl<F: PrimeField> IntoSubxtScalar for F {
     fn into_subxt_scalar(self) -> Scalar {
-        hp_groth16::Scalar::try_from_scalar(self)
-            .unwrap()
-            .try_encode_decode()
-            .unwrap()
+        let mut result = Scalar(vec![0; self.uncompressed_size()]);
+        self.serialize_uncompressed(&mut result.0[..]).unwrap();
+        result
     }
 }
 
-trait TryEncodeDecode: Encode {
-    fn try_encode_decode<D: Decode>(&self) -> Result<D, parity_scale_codec::Error> {
-        Decode::decode(&mut self.encode().as_slice())
+trait IntoG1 {
+    fn into_g1(self) -> G1;
+}
+
+impl<P: SWCurveConfig> IntoG1 for Affine<P> {
+    fn into_g1(self) -> G1 {
+        let mut result = G1(vec![0; self.uncompressed_size()]);
+        self.serialize_uncompressed(&mut result.0[..]).unwrap();
+        result
     }
 }
 
-impl<T: Encode> TryEncodeDecode for T {}
+trait IntoG2 {
+    fn into_g2(self) -> G2;
+}
+
+impl<P: SWCurveConfig> IntoG2 for Affine<P> {
+    fn into_g2(self) -> G2 {
+        let mut result = G2(vec![0; self.uncompressed_size()]);
+        self.serialize_uncompressed(&mut result.0[..]).unwrap();
+        result
+    }
+}
