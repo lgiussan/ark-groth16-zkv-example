@@ -1,9 +1,10 @@
+use ark_bls12_381::Bls12_381;
 use ark_bn254::Bn254;
 use ark_ec::pairing::Pairing;
 use ark_snark::SNARK;
 use ark_std::UniformRand;
 use ark_std::rand::{SeedableRng, rngs::StdRng};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::env;
 use subxt::{OnlineClient, PolkadotConfig};
 use subxt_signer::sr25519::dev;
@@ -20,6 +21,13 @@ use convert::{IntoSubxtProof, IntoSubxtScalar, IntoSubxtVk};
 #[subxt::subxt(runtime_metadata_path = "./zkverify-metadata.scale")]
 pub mod zkverify {}
 
+#[derive(Debug, Copy, Clone, ValueEnum, Default)]
+pub enum Curve {
+    #[default]
+    Bn254,
+    Bls12_381,
+}
+
 /// Simple program to generate a groth16 proof and submit it to zkVerify
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -31,21 +39,28 @@ struct Cli {
     /// Number of public inputs of the circuit
     #[arg(short, long, default_value_t = 1)]
     num_inputs: u32,
+
+    /// SNARK curve
+    #[arg(short, long, default_value_t, value_enum)]
+    curve: Curve,
 }
 
 #[tokio::main]
 async fn main() {
-    main_impl::<Bn254>().await;
+    let cli = Cli::parse();
+
+    match cli.curve {
+        Curve::Bn254 => main_impl::<Bn254>(&cli).await,
+        Curve::Bls12_381 => main_impl::<Bls12_381>(&cli).await,
+    }
 }
 
-async fn main_impl<E>()
+async fn main_impl<E>(cli: &Cli)
 where
     E: Pairing,
     ark_groth16::Proof<E>: IntoSubxtProof,
     ark_groth16::VerifyingKey<E>: IntoSubxtVk,
 {
-    let cli = Cli::parse();
-
     // Build vk, proof, and public inputs with `ark_groth16` library
     let num_inputs = cli.num_inputs;
     let rng = &mut StdRng::seed_from_u64(0);
@@ -76,13 +91,12 @@ where
     );
 
     // Submit transaction to zkVerify
-
     let key_pair = env::var("ZKV_SECRET_PHRASE")
         .map(|phrase| Mnemonic::parse(phrase).unwrap())
         .map(|mnemonic| Keypair::from_phrase(&mnemonic, None).unwrap())
         .unwrap_or(dev::alice());
 
-    let api = OnlineClient::<PolkadotConfig>::from_url(cli.url)
+    let api = OnlineClient::<PolkadotConfig>::from_url(&cli.url)
         .await
         .unwrap();
 
