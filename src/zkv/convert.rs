@@ -1,5 +1,5 @@
-use crate::zkverify::runtime_types::hp_groth16::data_structures::{G1, G2, Proof, Scalar};
-use crate::zkverify::runtime_types::pallet_groth16_verifier::groth16::{
+use super::zkverify::runtime_types::hp_groth16::data_structures::{G1, G2, Proof, Scalar};
+use super::zkverify::runtime_types::pallet_groth16_verifier::groth16::{
     Curve, ProofWithCurve, VerificationKeyWithCurve,
 };
 use ark_ec::short_weierstrass::{Affine, SWCurveConfig};

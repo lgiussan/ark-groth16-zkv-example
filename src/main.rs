@@ -4,22 +4,14 @@ use ark_ec::pairing::Pairing;
 use ark_snark::SNARK;
 use ark_std::UniformRand;
 use ark_std::rand::{SeedableRng, rngs::StdRng};
-use clap::{Parser, ValueEnum};
-use std::env;
-use subxt::{OnlineClient, PolkadotConfig};
-use subxt_signer::sr25519::dev;
-use subxt_signer::{bip39::Mnemonic, sr25519::Keypair};
-use zkverify::settlement_groth16_pallet::calls::types::submit_proof::VkOrHash;
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod circuit;
-pub mod convert;
+pub mod relayer;
+pub mod zkv;
 
 use circuit::*;
-use convert::{IntoSubxtProof, IntoSubxtScalar, IntoSubxtVk};
-
-// Generate an interface that we can use from the node's metadata.
-#[subxt::subxt(runtime_metadata_path = "./zkverify-metadata.scale")]
-pub mod zkverify {}
+use zkv::{IntoSubxtProof, IntoSubxtVk};
 
 #[derive(Debug, Copy, Clone, ValueEnum, Default)]
 pub enum Curve {
@@ -32,85 +24,103 @@ pub enum Curve {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    /// Url of zkVerify rpc node
-    #[arg(long, default_value_t = String::from("ws://127.0.0.1:9944"))]
-    url: String,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// Number of public inputs of the circuit
-    #[arg(short, long, default_value_t = 1)]
-    num_inputs: u32,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate and send a Groth16 proof to zkVerify blockchain
+    SendToZkv {
+        /// Url of zkVerify rpc node
+        #[arg(long, default_value_t = String::from("ws://127.0.0.1:9944"))]
+        url: String,
 
-    /// SNARK curve
-    #[arg(short, long, default_value_t, value_enum)]
-    curve: Curve,
+        /// Number of public inputs of the circuit
+        #[arg(short, long, default_value_t = 1)]
+        num_inputs: u32,
+
+        /// SNARK curve
+        #[arg(short, long, default_value_t, value_enum)]
+        curve: Curve,
+    },
+    SendToRelayer {
+        /// Url of zkVerify relayer
+        #[arg(long, default_value_t = String::from("https://relayer-api.horizenlabs.io/api/v1"))]
+        url: String,
+
+        /// Number of public inputs of the circuit
+        #[arg(short, long, default_value_t = 1)]
+        num_inputs: u32,
+
+        /// SNARK curve
+        #[arg(short, long, default_value_t, value_enum)]
+        curve: Curve,
+    },
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    match cli.curve {
-        Curve::Bn254 => main_impl::<Bn254>(&cli).await,
-        Curve::Bls12_381 => main_impl::<Bls12_381>(&cli).await,
+    match cli.command {
+        Commands::SendToZkv {
+            url,
+            num_inputs,
+            curve,
+        } => match curve {
+            Curve::Bn254 => generate_and_send_proof_to_zkv::<Bn254>(num_inputs, &url).await,
+            Curve::Bls12_381 => generate_and_send_proof_to_zkv::<Bls12_381>(num_inputs, &url).await,
+        },
+        Commands::SendToRelayer {
+            url,
+            num_inputs,
+            curve,
+        } => match curve {
+            Curve::Bn254 => generate_and_send_proof_to_relayer::<Bn254>(num_inputs, &url).await,
+            Curve::Bls12_381 => {
+                generate_and_send_proof_to_relayer::<Bls12_381>(num_inputs, &url).await
+            }
+        },
     }
 }
 
-async fn main_impl<E>(cli: &Cli)
+async fn generate_and_send_proof_to_zkv<E: Pairing>(num_inputs: u32, zkv_url: &str)
 where
     E: Pairing,
     ark_groth16::Proof<E>: IntoSubxtProof,
     ark_groth16::VerifyingKey<E>: IntoSubxtVk,
 {
-    // Build vk, proof, and public inputs with `ark_groth16` library
-    let num_inputs = cli.num_inputs;
+    let (vk, proof, inputs) = generate_proving_artifacts::<E>(num_inputs);
+    zkv::send_proof_to_zkv(vk, proof, inputs, zkv_url).await;
+}
+
+async fn generate_and_send_proof_to_relayer<E: Pairing>(num_inputs: u32, zkv_url: &str)
+where
+    E: Pairing,
+    ark_groth16::Proof<E>: Into<relayer::ProofWithCurve<E>>,
+    ark_groth16::VerifyingKey<E>: Into<relayer::VerifyingKeyWithCurve<E>>,
+{
+    let (vk, proof, inputs) = generate_proving_artifacts::<E>(num_inputs);
+    relayer::send_proof_to_relayer(vk, proof, inputs, zkv_url).await;
+}
+
+fn generate_proving_artifacts<E: Pairing>(
+    num_inputs: u32,
+) -> (
+    ark_groth16::VerifyingKey<E>,
+    ark_groth16::Proof<E>,
+    Vec<E::ScalarField>,
+) {
     let rng = &mut StdRng::seed_from_u64(0);
 
+    let inputs: Vec<_> = (0..num_inputs).map(|_| E::ScalarField::rand(rng)).collect();
     let circuit = DummyCircuit {
-        inputs: (0..num_inputs).map(|_| E::ScalarField::rand(rng)).collect(),
+        inputs: inputs.clone(),
     };
 
     let (pk, vk) = ark_groth16::Groth16::<E>::circuit_specific_setup(circuit.clone(), rng).unwrap();
     let proof = ark_groth16::Groth16::<E>::prove(&pk, circuit.clone(), rng).unwrap();
-    ark_groth16::Groth16::<E>::verify(&vk, circuit.inputs.as_slice(), &proof).unwrap();
 
-    // Convert to subxt types
-    let vk = vk.into_subxt_vk();
-    let proof = proof.into_subxt_proof();
-    let inputs: Vec<_> = circuit
-        .inputs
-        .into_iter()
-        .map(IntoSubxtScalar::into_subxt_scalar)
-        .collect();
-
-    // Build proof verification transaction
-    let submit_proof_tx = zkverify::tx().settlement_groth16_pallet().submit_proof(
-        VkOrHash::Vk(vk.into()),
-        proof,
-        inputs,
-        None,
-    );
-
-    // Submit transaction to zkVerify
-    let key_pair = env::var("ZKV_SECRET_PHRASE")
-        .map(|phrase| Mnemonic::parse(phrase).unwrap())
-        .map(|mnemonic| Keypair::from_phrase(&mnemonic, None).unwrap())
-        .unwrap_or(dev::alice());
-
-    let api = OnlineClient::<PolkadotConfig>::from_url(&cli.url)
-        .await
-        .unwrap();
-
-    let result = api
-        .tx()
-        .sign_and_submit_then_watch_default(&submit_proof_tx, &key_pair)
-        .await
-        .unwrap()
-        .wait_for_finalized_success()
-        .await
-        .unwrap();
-
-    println!(
-        "Transaction finalized on zkVerify, tx hash: {:?}",
-        result.extrinsic_hash()
-    )
+    (vk, proof, inputs)
 }

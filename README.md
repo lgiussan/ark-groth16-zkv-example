@@ -1,6 +1,9 @@
 # ark-groth16-zkv-example
 
-A simple example of submission of Groth16 proofs generated with [`ark-groth16`](https://github.com/arkworks-rs/groth16) library to zkVerify chain via [`subxt`](https://github.com/paritytech/subxt) library.
+A simple example of submission of Groth16 proofs generated with [`ark-groth16`](https://github.com/arkworks-rs/groth16) library to zkVerify chain in two possible ways:
+
+- directly, via [`subxt`](https://github.com/paritytech/subxt) library (requires having test tVFY tokens)
+- indirectly, via the [`Relayer`](https://docs.zkverify.io/overview/getting-started/relayer) service (doesn't require tVFY tokens)
 
 ## Overview
 
@@ -29,7 +32,7 @@ subxt metadata \
   --output-file="zkverify-metadata.scale"
 ```
 
-## Usage
+## Build instructions
 
 1. Clone the repository:
 
@@ -44,17 +47,31 @@ subxt metadata \
    cargo build --release
    ```
 
-3. Run the example:
+## Usage
 
-   - By default, the program connects to a local instance of zkVerify running at `127.0.0.1:9944` and uses the pre-funded development `alice` account
+There are three options for submitting proofs to zkVerify. All the following commands allow to specify the number of inputs (from 0 to 64) via the optional parameter `--num-inputs` (default is 1), and the curve (`bn254`, or `bls12-381`) via the optional parameter `--curve` (default is `bn254`).
 
-     ```bash
-     ./target/release/ark-groth16-zkv-example
-     ```
+### Submitting proofs to local development zkVerify node
 
-   - Otherwise, if you want to send proofs to the real zkVerify testnet, you should set the `ZKV_SERET_PHRASE` to the secret phrase of your zkVerify testnet account, and specify the rpc endpoint url, like this:
+By default, the `send-to-zkv` command connects to a local instance of zkVerify running at `127.0.0.1:9944` and uses the pre-funded development `alice` account
 
-     ```bash
-     ZKV_SECRET_PHRASE="bottom drive obey lake curtain smoke basket hold race lonely fit walk" \
-         ./target/release/ark-groth16-zkv-example --url="wss://volta-rpc.zkverify.io"
-     ```
+```bash
+./target/release/ark-groth16-zkv-example send-to-zkv
+```
+
+### Submitting proofs to actual zkVerify testnet
+
+Otherwise, if you want to send proofs to the real zkVerify testnet, you should set the `ZKV_SERET_PHRASE` to the secret phrase of your zkVerify testnet account, and specify the rpc endpoint url, like this:
+
+```bash
+ZKV_SECRET_PHRASE="bottom drive obey lake curtain smoke basket hold race lonely fit walk" \
+    ./target/release/ark-groth16-zkv-example send-to-zkv --url="wss://volta-rpc.zkverify.io"
+```
+
+### Submitting proofs via the relayer
+
+A third option is to send proofs via the relayer service
+
+```bash
+RELAYER_API_KEY=<your-api-key> ./target/release/ark-groth16-zkv-example send-to-relayer
+```
